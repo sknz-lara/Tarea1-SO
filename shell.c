@@ -1,385 +1,303 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
 #include <unistd.h>
-#include <ctype.h>
+#include <sys/wait.h>
+#include <sys/resource.h>
+#include <sys/time.h>
+#include <signal.h>
+#include <fcntl.h>
 #include <errno.h>
-#include <sys/time.h>     // para gettimeofday
-#include <sys/resource.h> // para getrusage y wait4
+#include <ctype.h>
 
-static char *trim(char *s)
-{
-    while (*s && isspace((unsigned char)*s))
-    {
-        s++;
-    }
-    if (*s == 0)
-    {
-        return s;
-    }
+static char* trim(char *s){
+    while (*s && isspace((unsigned char)*s)) s++;
+    if (*s == 0) return s;
     char *end = s + strlen(s) - 1;
-    while (end > s && isspace((unsigned char)*end))
-    {
-        end--;
-    }
+    while (end > s && isspace((unsigned char)*end)) end--;
     end[1] = 0;
     return s;
 }
 
-static char **split(const char *line, const char *delim, int *count)
-{
+static char** split(const char *line, const char *delim, int *count){
     *count = 0;
     char *copy = strdup(line);
-    if (!copy)
-        return NULL;
-
-    char **parts = NULL;
-    char *tok, *saveptr;
-
-    for (tok = strtok_r(copy, delim, &saveptr); tok; tok = strtok_r(NULL, delim, &saveptr))
-    {
+    if (!copy) return NULL;
+    char **parts = NULL, *tok, *saveptr;
+    for (tok = strtok_r(copy, delim, &saveptr); tok; tok = strtok_r(NULL, delim, &saveptr)) {
         char *clean = trim(tok);
         char *dup = strdup(clean);
-        if (!dup)
-        {
-            for (int i = 0; i < *count; i++)
-                free(parts[i]);
-            free(parts);
-            free(copy);
-            return NULL;
-        }
-        char **new_parts = realloc(parts, (size_t)(*count + 2) * sizeof(char *));
-        if (!new_parts)
-        {
-            free(dup);
-            for (int i = 0; i < *count; i++)
-                free(parts[i]);
-            free(parts);
-            free(copy);
-            return NULL;
-        }
-        parts = new_parts;
-        parts[*count] = dup;
-        (*count)++;
+        if (!dup) { free(copy); for (int i=0;i<*count;i++) free(parts[i]); free(parts); return NULL; }
+        char **np = realloc(parts, (size_t)(*count+2)*sizeof(char*));
+        if (!np) { free(dup); free(copy); for (int i=0;i<*count;i++) free(parts[i]); free(parts); return NULL; }
+        parts = np; parts[*count] = dup; (*count)++;
     }
-
-    if (parts)
-    {
-        parts[*count] = NULL;
-    }
+    if (parts) parts[*count] = NULL;
     free(copy);
     return parts;
 }
 
-static char **parse_argv(const char *s)
-{
-    int argc = 0;
-    char **argv = NULL;
-    char *copy = strdup(s);
-    if (!copy)
-        return NULL;
-
+static char** parse_argv(const char *s){
+    int argc = 0; char **argv = NULL;
+    char *copy = strdup(s); if (!copy) return NULL;
     char *tok, *saveptr;
-    for (tok = strtok_r(copy, " \t\n\r", &saveptr); tok; tok = strtok_r(NULL, " \t\n\r", &saveptr))
-    {
+    for (tok = strtok_r(copy, " \t\n\r", &saveptr); tok; tok = strtok_r(NULL, " \t\n\r", &saveptr)) {
         char *dup = strdup(tok);
-        if (!dup)
-        {
-            for (int i = 0; i < argc; i++)
-                free(argv[i]);
-            free(argv);
-            free(copy);
-            return NULL;
-        }
-        char **new_argv = realloc(argv, (size_t)(argc + 2) * sizeof(char *));
-        if (!new_argv)
-        {
-            free(dup);
-            for (int i = 0; i < argc; i++)
-                free(argv[i]);
-            free(argv);
-            free(copy);
-            return NULL;
-        }
-        argv = new_argv;
-        argv[argc++] = dup;
+        if (!dup) { for (int i=0;i<argc;i++) free(argv[i]); free(argv); free(copy); return NULL; }
+        char **np = realloc(argv, (size_t)(argc+2)*sizeof(char*));
+        if (!np) { free(dup); for (int i=0;i<argc;i++) free(argv[i]); free(argv); free(copy); return NULL; }
+        argv = np; argv[argc++] = dup;
     }
-
-    if (argv)
-    {
-        argv[argc] = NULL;
-    }
+    if (argv) argv[argc] = NULL;
     free(copy);
     return argv;
 }
+static void free_argv(char **argv){ if (!argv) return; for (int i=0; argv[i]; i++) free(argv[i]); free(argv); }
 
-static void free_argv(char **argv)
-{
-    if (!argv)
-        return;
-    for (int i = 0; argv[i]; i++)
-    {
-        free(argv[i]);
-    }
-    free(argv);
-}
-
-static int run_pipeline(char ***argvs, int n)
-{
-    if (n <= 0)
-    {
-        errno = EINVAL;
-        return -1;
-    }
-
+static int run_pipeline(char ***argvs, int n){
+    if (n <= 0) { errno = EINVAL; return -1; }
     int (*pipes)[2] = NULL;
-    if (n > 1)
-    {
-        pipes = malloc((size_t)(n - 1) * sizeof(*pipes));
-        if (!pipes)
-        {
-            perror("malloc pipes");
-            return -1;
-        }
-        for (int i = 0; i < n - 1; i++)
-        {
-            if (pipe(pipes[i]) == -1)
-            {
+    if (n > 1) {
+        pipes = malloc((size_t)(n-1)*sizeof(*pipes));
+        if (!pipes) { perror("malloc pipes"); return -1; }
+        for (int i=0;i<n-1;i++){
+            if (pipe(pipes[i]) == -1){
                 perror("pipe");
-                for (int k = 0; k < i; k++)
-                {
-                    close(pipes[k][0]);
-                    close(pipes[k][1]);
-                }
+                for (int k=0;k<i;k++){ close(pipes[k][0]); close(pipes[k][1]); }
                 free(pipes);
                 return -1;
             }
         }
     }
-
-    for (int i = 0; i < n; i++)
-    {
+    for (int i=0;i<n;i++){
         pid_t pid = fork();
-        if (pid == -1)
-        {
+        if (pid == -1){
             perror("fork");
-            if (pipes)
-            {
-                for (int j = 0; j < n - 1; j++)
-                {
-                    close(pipes[j][0]);
-                    close(pipes[j][1]);
-                }
-                free(pipes);
-            }
-            while (wait(NULL) > 0)
-                ; // Limpia procesos hijos ya creados
+            if (pipes){ for (int j=0;j<n-1;j++){ close(pipes[j][0]); close(pipes[j][1]); } free(pipes); }
+            while (wait(NULL) > 0) {}
             return -1;
         }
-
-        if (pid == 0)
-        { // Proceso hijo
-            if (n > 1)
-            {
-                if (i > 0)
-                {
-                    if (dup2(pipes[i - 1][0], STDIN_FILENO) == -1)
-                    {
-                        perror("dup2 stdin");
-                        _exit(1);
-                    }
+        if (pid == 0){
+            if (n > 1){
+                if (i > 0){
+                    if (dup2(pipes[i-1][0], STDIN_FILENO) == -1){ perror("dup2 stdin"); _exit(1); }
                 }
-                if (i < n - 1)
-                {
-                    if (dup2(pipes[i][1], STDOUT_FILENO) == -1)
-                    {
-                        perror("dup2 stdout");
-                        _exit(1);
-                    }
+                if (i < n-1){
+                    if (dup2(pipes[i][1], STDOUT_FILENO) == -1){ perror("dup2 stdout"); _exit(1); }
                 }
-                for (int j = 0; j < n - 1; j++)
-                {
-                    close(pipes[j][0]);
-                    close(pipes[j][1]);
-                }
+                for (int j=0;j<n-1;j++){ close(pipes[j][0]); close(pipes[j][1]); }
             }
             execvp(argvs[i][0], argvs[i]);
             perror("execvp");
             _exit(127);
         }
     }
-
-    if (pipes)
-    {
-        for (int j = 0; j < n - 1; j++)
-        {
-            close(pipes[j][0]);
-            close(pipes[j][1]);
-        }
-        free(pipes);
-    }
-    for (int i = 0; i < n; i++)
-    {
-        wait(NULL);
-    }
+    if (pipes){ for (int j=0;j<n-1;j++){ close(pipes[j][0]); close(pipes[j][1]); } free(pipes); }
+    for (int i=0;i<n;i++) wait(NULL);
     return 0;
 }
 
-/**
- * @brief Ejecuta un comando, mide su tiempo y uso de recursos.
- */
-static int run_and_measure(char **argv)
-{
-    if (!argv || !argv[0])
-    {
-        fprintf(stderr, "miprof: No se reconoce ningun comando para ejecutar.\n");
-        return 0;
+
+static volatile sig_atomic_t g_timed_out = 0;
+static volatile sig_atomic_t g_child_pgid = 0;
+
+static void on_alarm(int sig){
+    (void)sig;
+    if (g_child_pgid > 0){
+        kill(-g_child_pgid, SIGKILL);
+    }
+    g_timed_out = 1;
+}
+
+static char* join_tokens(char **argv, int start_idx){
+    size_t len = 0;
+    for (int i=start_idx; argv[i]; i++) len += strlen(argv[i]) + 1;
+    if (len == 0) return NULL;
+    char *buf = malloc(len + 1);
+    if (!buf) return NULL;
+    buf[0] = '\0';
+    for (int i=start_idx; argv[i]; i++){
+        strcat(buf, argv[i]);
+        if (argv[i+1]) strcat(buf, " ");
+    }
+    return buf;
+}
+
+static void print_and_optionally_save(const char *cmdline,
+                                      double real_time,
+                                      double user_time,
+                                      double sys_time,
+                                      long maxrss_kb,
+                                      const char *savefile){
+    printf("\n--- Mediciones de miprof ---\n");
+    printf("Comando: %s\n", cmdline);
+    printf("Tiempo real: %.6f s\n", real_time);
+    printf("Tiempo de usuario: %.6f s\n", user_time);
+    printf("Tiempo de sistema: %.6f s\n", sys_time);
+    printf("Pico de memoria residente: %ld KB\n", maxrss_kb);
+    printf("---------------------------\n\n");
+
+    if (savefile){
+        int fd = open(savefile, O_CREAT | O_APPEND | O_WRONLY, 0644);
+        if (fd == -1){
+            perror("open (ejecsave)");
+            return;
+        }
+        dprintf(fd,
+                "Comando: %s\nTiempo real: %.6f s\nTiempo usuario: %.6f s\nTiempo sistema: %.6f s\nMaxRSS: %ld KB\n---\n",
+                cmdline, real_time, user_time, sys_time, maxrss_kb);
+        close(fd);
+        printf("[Resultados guardados en %s]\n\n", savefile);
+    }
+}
+static int run_and_measure_cmdline(const char *cmdline, const char *savefile, int timeout_secs){
+    if (!cmdline || !*cmdline){
+        fprintf(stderr, "miprof: comando vacío\n");
+        return -1;
     }
 
     struct timeval real_start, real_end;
     struct rusage usage;
-
-    // toma el tiempo real de inicio, justo antes de la ejecucion
     gettimeofday(&real_start, NULL);
 
+    struct sigaction sa = {0};
+    if (timeout_secs > 0){
+        sa.sa_handler = on_alarm;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = SA_RESTART;
+        if (sigaction(SIGALRM, &sa, NULL) == -1){
+            perror("sigaction");
+            return -1;
+        }
+    }
+
+    g_timed_out = 0;
+    g_child_pgid = 0;
+
     pid_t pid = fork();
-    if (pid == -1)
-    {
+    if (pid == -1){
         perror("fork");
         return -1;
     }
 
-    if (pid == 0)
-    {
-        // Proceso hijo: ejecuta el comando
-        execvp(argv[0], argv);
-        // Si execvp retorna, es porque hubo un error
-        fprintf(stderr, "Error al ejecutar '%s': %s\n", argv[0], strerror(errno));
-        _exit(127); // salida estandar para "comando no encontrado"
+    if (pid == 0){
+        setpgid(0, 0);
+        execl("/bin/sh", "sh", "-c", cmdline, (char*)NULL);
+        fprintf(stderr, "Error al ejecutar comando con sh -c: %s\n", strerror(errno));
+        _exit(127);
     }
-    else
-    {
-        // padre espera al hijo y mide los recursos
-        int status;
-        if (wait4(pid, &status, 0, &usage) == -1) // wait4 para el tiempo de CPU y la memoria
-        {
-            perror("wait4");
-            return -1;
+
+    setpgid(pid, pid);
+    g_child_pgid = pid;
+
+    if (timeout_secs > 0){
+        struct itimerval it = {0};
+        it.it_value.tv_sec = timeout_secs;
+        if (setitimer(ITIMER_REAL, &it, NULL) == -1){
+            perror("setitimer");
         }
-
-        // tiempo real de finalización
-        gettimeofday(&real_end, NULL);
-
-        // tiempo real
-        double real_time = (real_end.tv_sec - real_start.tv_sec) +
-                           (real_end.tv_usec - real_start.tv_usec) / 1000000.0;
-
-        // tiempo de usuario (CPU time en modo usuario)
-        double user_time = usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1000000.0;
-
-        // tiempo del sistema (CPU time en modo kernel)
-        double sys_time = usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1000000.0;
-
-        // max de memoria
-        long maxrss_kb = usage.ru_maxrss;
-
-        printf("\n--- Mediciones de miprof ---\n");
-        printf("Comando: %s\n", argv[0]);
-        printf("Tiempo real: %.6f s\n", real_time);
-        printf("Tiempo de usuario: %.6f s\n", user_time);
-        printf("Tiempo de sistema: %.6f s\n", sys_time);
-        printf("Pico de memoria residente: %ld KB\n", maxrss_kb);
-        printf("---------------------------\n\n");
     }
 
+    int status;
+    if (wait4(pid, &status, 0, &usage) == -1){
+        if (errno != EINTR) {
+            perror("wait4");
+        }
+        while (waitpid(pid, &status, 0) == -1 && errno == EINTR) {}
+    }
+    if (timeout_secs > 0){
+        struct itimerval zero = {0};
+        setitimer(ITIMER_REAL, &zero, NULL);
+    }
+
+    gettimeofday(&real_end, NULL);
+
+    double real_time = (real_end.tv_sec - real_start.tv_sec)
+                     + (real_end.tv_usec - real_start.tv_usec)/1000000.0;
+    double user_time = usage.ru_utime.tv_sec + usage.ru_utime.tv_usec/1000000.0;
+    double sys_time  = usage.ru_stime.tv_sec + usage.ru_stime.tv_usec/1000000.0;
+    long   maxrss_kb = usage.ru_maxrss;
+
+    if (g_timed_out){
+        printf("\n[miprof] El proceso excedió el tiempo máximo (%d s) y fue terminado.\n", timeout_secs);
+    }
+
+    print_and_optionally_save(cmdline, real_time, user_time, sys_time, maxrss_kb, savefile);
     return 0;
 }
 
-int main(void)
-{
-    char *line = NULL;
-    size_t cap = 0;
+/* =====================  MAIN SHELL  ===================== */
 
-    for (;;)
-    {
+int main(void){
+    char *line = NULL; size_t cap = 0;
+
+    for (;;){
         printf("mishell> ");
         fflush(stdout);
 
-        if (getline(&line, &cap, stdin) == -1)
-        {
+        if (getline(&line, &cap, stdin) == -1){
             printf("\n");
             break;
         }
 
         char *cmdline = trim(line);
-        if (*cmdline == '\0')
-        {
-            continue;
-        }
-        if (strcmp(cmdline, "exit") == 0)
-        {
-            break;
-        }
+        if (*cmdline == '\0') continue;
+        if (strcmp(cmdline, "exit") == 0) break;
 
-        // revisa si el comando 'miprof' esta de buscar pipes
         char **first_args = parse_argv(cmdline);
-        if (!first_args || !first_args[0])
-        {
+        if (!first_args || !first_args[0]){
             free_argv(first_args);
             continue;
         }
 
-        if (strcmp(first_args[0], "miprof") == 0)
-        {
-            // ej: "miprof ls -l", se debe ejecutar "ls -l"
-            // first_args + 1 apunta al segundo elemento ("ls")
-            run_and_measure(first_args + 1);
-            free_argv(first_args); // libera la memoria del parseo
-        }
-        else
-        {// si no es miprof, se procesa como un comando simple o con pipelines.
+        if (strcmp(first_args[0], "miprof") == 0){
+            const char *mode = first_args[1];
+            if (!mode || strcmp(mode, "ejec") == 0){
+                int start = (mode && strcmp(mode,"ejec")==0) ? 2 : 1;
+                char *cmd = join_tokens(first_args, start);
+                if (!cmd){ fprintf(stderr, "miprof: falta comando\n"); free_argv(first_args); continue; }
+                run_and_measure_cmdline(cmd, NULL, 0);
+                free(cmd);
+            } else if (strcmp(mode, "ejecsave") == 0){
+                if (!first_args[2]){ fprintf(stderr, "miprof: falta archivo\n"); free_argv(first_args); continue; }
+                const char *savefile = first_args[2];
+                char *cmd = join_tokens(first_args, 3);
+                if (!cmd){ fprintf(stderr, "miprof: falta comando\n"); free_argv(first_args); continue; }
+                run_and_measure_cmdline(cmd, savefile, 0);
+                free(cmd);
+            } else if (strcmp(mode, "ejecutar") == 0){
+                if (!first_args[2]){ fprintf(stderr, "miprof: falta <segundos>\n"); free_argv(first_args); continue; }
+                int secs = atoi(first_args[2]);
+                if (secs <= 0){ fprintf(stderr, "miprof: <segundos> inválido\n"); free_argv(first_args); continue; }
+                char *cmd = join_tokens(first_args, 3);
+                if (!cmd){ fprintf(stderr, "miprof: falta comando\n"); free_argv(first_args); continue; }
+                run_and_measure_cmdline(cmd, NULL, secs);
+                free(cmd);
+            } else {
+                fprintf(stderr, "Uso: miprof [ejec|ejecsave archivo|ejecutar <segundos>] comando args...\n");
+            }
             free_argv(first_args);
-
-            int nseg = 0;
-            char **segs = split(cmdline, "|", &nseg);
-            if (!segs)
-                continue;
-
-            char ***argvs = malloc((size_t)nseg * sizeof(char **));
-            if (!argvs)
-            {
-                perror("malloc");
-                for (int i = 0; segs[i]; i++)
-                    free(segs[i]);
-                free(segs);
-                continue;
-            }
-
-            int ok = 1;
-            for (int i = 0; i < nseg; i++)
-            {
-                argvs[i] = parse_argv(segs[i]);
-                if (!argvs[i] || !argvs[i][0])
-                {
-                    ok = 0;
-                    break;
-                }
-            }
-
-            if (ok)
-            {
-                run_pipeline(argvs, nseg);
-            }
-
-            // Se libera la memoria
-            for (int i = 0; i < nseg; i++)
-                free_argv(argvs[i]);
-            free(argvs);
-            for (int i = 0; segs[i]; i++)
-                free(segs[i]);
-            free(segs);
+            continue;
         }
+
+        free_argv(first_args);
+        int nseg = 0; char **segs = split(cmdline, "|", &nseg);
+        if (!segs) continue;
+        char ***argvs = malloc((size_t)nseg*sizeof(char**));
+        if (!argvs){ perror("malloc"); for (int i=0; segs[i]; i++) free(segs[i]); free(segs); continue; }
+
+        int ok = 1;
+        for (int i=0;i<nseg;i++){
+            argvs[i] = parse_argv(segs[i]);
+            if (!argvs[i] || !argvs[i][0]) { ok = 0; break; }
+        }
+        if (ok) run_pipeline(argvs, nseg);
+
+        for (int i=0;i<nseg;i++) free_argv(argvs[i]);
+        free(argvs);
+        for (int i=0; segs[i]; i++) free(segs[i]);
+        free(segs);
     }
 
     free(line);
