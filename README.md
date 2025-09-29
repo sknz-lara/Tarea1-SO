@@ -1,29 +1,14 @@
-# Tarea1-SO
 
 ## Compilación
-
-  
-
 Para compilar el proyecto ejecuta el siguiente comando en la raíz del proyecto:
-
-  
-
 ```bash
-
 gcc -o run shell.c -Wall
-
 ```
-
-  
-
 Este comando creará un archivo ejecutable llamado `run`. La bandera `-Wall` se utiliza para mostrar todas las advertencias del compilador.
 
-  
-
----
+---  
 
   
-
 ## Ejecución y Uso
 
   
@@ -96,15 +81,17 @@ miprof [opciones] <comando> [argumentos...]
 
 ```
 
-  
 
 #### a) Medición y Salida por Pantalla
 
   
 
-Ejecuta un comando y muestra las mediciones directamente en la terminal.
+Ejecuta un comando y muestra las mediciones directamente en la terminal. El subcomando ejec es opcional, ya que es la acción por defecto.
 
-  
+
+```bash
+miprof [ejec] <comando> [argumentos...]
+```
 
 **Input:**
 
@@ -135,11 +122,58 @@ Máximo de memoria: 2028 KB
 ---------------------------
 
 ```
+#### b) Medición y Guardado en Archivo (ejecsave)
+
+Ejecuta un comando, muestra las mediciones y las agrega al final de un archivo de texto. Si el archivo no existe, lo crea.
+```bash
+miprof ejecsave <archivo> <comando> [argumentos...]
+```
+
+**Input:**
+```bash
+mishell> miprof ejecsave resultados.txt ls -l
+```
+
+**Output:**
+```bash
+--- Mediciones de miprof ---
+Comando: ls -l
+Tiempo real: 0.009871 s
+Tiempo de usuario: 0.001245 s
+Tiempo de sistema: 0.003451 s
+Pico de memoria residente: 3150 KB
+---------------------------
+mishell> miprof ejecsave resultados.txt ls -l
+```
+#### c) Medición con Límite de Tiempo (ejecutar)
+
+Ejecuta un comando con un tiempo máximo de ejecución en segundos. Si el comando excede este límite, la shell lo terminará automáticamente.
+
+```bash
+miprof ejecutar <segundos> <comando> [argumentos...]
+```
+
+**Input:**
+```bash
+mishell> miprof ejecutar 3 sleep 5
+```
+
+**Output:**
+```bash
+[miprof] El proceso excedió el tiempo máximo (3 s) y fue terminado.
+
+--- Mediciones de miprof ---
+Comando: sleep 5
+Tiempo real: 3.001845 s
+Tiempo de usuario: 0.000000 s
+Tiempo de sistema: 0.000987 s
+Pico de memoria residente: 2028 KB
+---------------------------
+```
 
 ### 4. Salir de la Shell
 
-  
-
+[Resultados guardados en mediciones.log]
 Para finalizar la sesión de `mishell`, usa el comando interno `exit`.
 
   
