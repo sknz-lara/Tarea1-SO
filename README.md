@@ -143,7 +143,6 @@ Tiempo de usuario: 0.001245 s
 Tiempo de sistema: 0.003451 s
 Pico de memoria residente: 3150 KB
 ---------------------------
-mishell> miprof ejecsave resultados.txt ls -l
 ```
 #### c) Medición con Límite de Tiempo (ejecutar)
 
@@ -173,7 +172,6 @@ Pico de memoria residente: 2028 KB
 
 ### 4. Salir de la Shell
 
-[Resultados guardados en mediciones.log]
 Para finalizar la sesión de `mishell`, usa el comando interno `exit`.
 
   
