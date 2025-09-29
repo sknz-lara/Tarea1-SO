@@ -143,7 +143,9 @@ Tiempo de usuario: 0.001245 s
 Tiempo de sistema: 0.003451 s
 Pico de memoria residente: 3150 KB
 ---------------------------
+[Resultados guardados en resultados.txt]
 ```
+
 #### c) Medición con Límite de Tiempo (ejecutar)
 
 Ejecuta un comando con un tiempo máximo de ejecución en segundos. Si el comando excede este límite, la shell lo terminará automáticamente.
