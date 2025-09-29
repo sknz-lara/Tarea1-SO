@@ -107,13 +107,9 @@ mishell> miprof sleep 2
 --- Mediciones de miprof ---
 
 Comando: sleep
-
 Tiempo real: 2.014077 s
-
 Tiempo de usuario: 0.000000 s
-
 Tiempo de sistema: 0.001264 s
-
 Máximo de memoria: 2028 KB
 ---------------------------
 
