@@ -1,10 +1,15 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
 #include <unistd.h>
-#include <ctype.h>
+#include <sys/wait.h>
+#include <sys/resource.h>
+#include <sys/time.h>
+#include <signal.h>
+#include <fcntl.h>
 #include <errno.h>
+#include <ctype.h>
 
 static char *trim(char *s)
 {
@@ -181,10 +186,9 @@ static int run_pipeline(char ***argvs, int n)
                     close(pipes[j][1]);
                 }
             }
-
             execvp(argvs[i][0], argvs[i]);
             perror("execvp");
-            _exit(1);
+            _exit(127);
         }
     }
     if (pipes)
